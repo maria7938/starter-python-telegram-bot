@@ -1,45 +1,58 @@
-import os
-from dotenv import load_dotenv
-from fastapi import FastAPI, Header, HTTPException, Depends
-from telegram import Update, Bot
-from pydantic import BaseModel
+import requests
+from bs4 import BeautifulSoup
+import time
+import hashlib
 
-class TelegramUpdate(BaseModel):
-    update_id: int
-    message: dict
+# Telegram Bot API URL and your bot token
+TELEGRAM_API_URL = "https://api.telegram.org/bot"
+BOT_TOKEN = "6505638593:AAEsWBviZ0dpzeyiCYk-Ga4y33RX0BOnzJY"
+CHAT_ID = "5119888403"
 
-app = FastAPI()
+# Function to send message through Telegram bot
+def send_telegram_message(message):
+    send_url = f"{TELEGRAM_API_URL}{BOT_TOKEN}/sendMessage"
+    data = {
+        "chat_id": CHAT_ID,
+        "text": message,
+    }
+    try:
+        response = requests.post(send_url, data=data)
+        response.raise_for_status()
+    except requests.exceptions.RequestException as e:
+        print(f"Error sending message: {e}")
 
-# Load variables from .env file if present
-load_dotenv()
+# Function to fetch and hash the content of interest
+def fetch_content(url):
+    try:
+        response = requests.get(url)
+        soup = BeautifulSoup(response.text, 'html.parser')
+        content = soup.select_one('section.latest-added').encode('utf-8')
+        # Hash the content for easy comparison
+        content_hash = hashlib.md5(content).hexdigest()
+        return content_hash
+    except Exception as e:
+        print(f"Error fetching the content: {e}")
+        return None
 
-# Read the variable from the environment (or .env file)
-bot_token = os.getenv('BOT_TOKEN')
-secret_token = os.getenv("SECRET_TOKEN")
-# webhook_url = os.getenv('CYCLIC_URL', 'http://localhost:8181') + "/webhook/"
+# Function to periodically check the website
+def monitor_website(url, interval=300):
+    print("Starting the monitoring process...")
+    last_hash = None
+    while True:
+        current_hash = fetch_content(url)
+        if current_hash is None:
+            print("Failed to fetch the content. Trying again next cycle.")
+        elif last_hash is not None and current_hash != last_hash:
+            message = "Change detected on https://anonymsms.com/! Check out the latest changes."
+            send_telegram_message(message)
+            print("Change detected! Notification sent.")
+        else:
+            print("No change detected.")
+        last_hash = current_hash
+        time.sleep(interval)
 
-bot = Bot(token=bot_token)
-# bot.set_webhook(url=webhook_url)
-# webhook_info = bot.get_webhook_info()
-# print(webhook_info)
+# URL to monitor
+url = 'https://bac96839-6a93-427d-b4f7-9af1cc638e49-00-7z585xalbq4s.pike.replit.dev/'
 
-def auth_telegram_token(x_telegram_bot_api_secret_token: str = Header(None)) -> str:
-    # return true # uncomment to disable authentication
-    if x_telegram_bot_api_secret_token != secret_token:
-        raise HTTPException(status_code=403, detail="Not authenticated")
-    return x_telegram_bot_api_secret_token
-
-@app.post("/webhook/")
-async def handle_webhook(update: TelegramUpdate, token: str = Depends(auth_telegram_token)):
-    chat_id = update.message["chat"]["id"]
-    text = update.message["text"]
-    # print("Received message:", update.message)
-
-    if text == "/start":
-        with open('hello.gif', 'rb') as photo:
-            await bot.send_photo(chat_id=chat_id, photo=photo)
-        await bot.send_message(chat_id=chat_id, text="Welcome to Cyclic Starter Python Telegram Bot!")
-    else:
-        await bot.send_message(chat_id=chat_id, reply_to_message_id=update.message["message_id"], text="Yo!")
-
-    return {"ok": True}
+# Start monitoring with a check every 5 minutes (300 seconds)
+monitor_website(url, 10)
